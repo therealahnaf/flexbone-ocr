@@ -1,0 +1,1 @@
+"""Flexbone FastAPI application package."""
