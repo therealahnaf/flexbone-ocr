@@ -216,9 +216,10 @@ Production uses Cloud Build, Artifact Registry, Cloud Run, and Secret Manager in
 project `flexbone-ocr-challenge-505909`. The deployed URL is recorded here after
 the initial release:
 
-```text
-PENDING_INITIAL_DEPLOYMENT
-```
+Public API: [https://flexbone-ocr-7wgxo2mfka-el.a.run.app](https://flexbone-ocr-7wgxo2mfka-el.a.run.app)
+
+- Interactive docs: [https://flexbone-ocr-7wgxo2mfka-el.a.run.app/docs](https://flexbone-ocr-7wgxo2mfka-el.a.run.app/docs)
+- Health check: [https://flexbone-ocr-7wgxo2mfka-el.a.run.app/api/v1/health](https://flexbone-ocr-7wgxo2mfka-el.a.run.app/api/v1/health)
 
 Cloud Run runs with the dedicated identity
 `ocr-runtime@flexbone-ocr-challenge-505909.iam.gserviceaccount.com`, zero to one
