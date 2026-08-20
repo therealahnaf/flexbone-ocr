@@ -140,6 +140,7 @@ Settings use the `OCR_` prefix and can be placed in `.env`:
 
 | Variable | Default | Description |
 | --- | ---: | --- |
+| `OCR_ENV_FILE` | `.env` | Optional bootstrap path to a mounted dotenv file |
 | `OCR_MAX_FILE_SIZE_BYTES` | `10485760` | Maximum bytes per image (10 MiB) |
 | `OCR_MAX_IMAGE_PIXELS` | `25000000` | Maximum decoded width x height |
 | `OCR_CACHE_TTL_SECONDS` | `600` | Cached OCR result lifetime |
@@ -209,19 +210,77 @@ docker run --rm -p 8080:8080 `
 Test it at `http://127.0.0.1:8080/docs`. The container listens on `0.0.0.0` and
 uses Cloud Run's injected `PORT`, defaulting to 8080 locally.
 
-## Future Cloud Run deployment
+## Production deployment
 
-Deployment is intentionally not performed as part of the local implementation.
-When ready, the existing dedicated runtime identity can be attached with:
+Production uses Cloud Build, Artifact Registry, Cloud Run, and Secret Manager in
+project `flexbone-ocr-challenge-505909`. The deployed URL is recorded here after
+the initial release:
 
-```powershell
-gcloud run deploy flexbone-ocr `
-  --source . `
-  --project flexbone-ocr-challenge-505909 `
-  --region asia-south1 `
-  --allow-unauthenticated `
-  --service-account ocr-runtime@flexbone-ocr-challenge-505909.iam.gserviceaccount.com
+```text
+PENDING_INITIAL_DEPLOYMENT
 ```
 
-Cloud Run supplies ADC automatically through that service identity; do not copy
-local credential files into the image.
+Cloud Run runs with the dedicated identity
+`ocr-runtime@flexbone-ocr-challenge-505909.iam.gserviceaccount.com`, zero to one
+instances, one CPU, 512 MiB memory, request-based billing, and a 20-request
+concurrency limit. The one-instance maximum preserves the process-local cache and
+rate-limit behavior.
+
+### Production configuration and secrets
+
+Secret Manager secret `flexbone-ocr-env` contains the complete production dotenv
+document. Cloud Run mounts a numeric secret version read-only at
+`/secrets/ocr.env` and sets `OCR_ENV_FILE=/secrets/ocr.env`. The application fails
+startup safely if an explicitly configured file is missing, unreadable, or
+invalid.
+
+Create or rotate the payload from a temporary file outside the repository. Never
+put the value directly in a command argument or print it:
+
+```powershell
+$configFile = Join-Path $env:TEMP "flexbone-ocr-production.env"
+# Create $configFile with the OCR_* settings, then upload it without displaying it.
+gcloud secrets versions add flexbone-ocr-env `
+  --project flexbone-ocr-challenge-505909 `
+  --data-file=$configFile
+Remove-Item -LiteralPath $configFile
+```
+
+After rotation, update `_OCR_ENV_VERSION` on the `flexbone-main-deploy` trigger
+and run it. Retain the current and two previous enabled versions for rollback;
+destroy older versions after the rollback window. Do not store Google credentials
+in this secret and do not set `GOOGLE_APPLICATION_CREDENTIALS` on Cloud Run.
+Cloud Run supplies ADC through its service identity.
+
+### CI/CD
+
+- `cloudbuild-ci.yaml` runs frozen dependency installation, Ruff checks, and the
+  fake-provider test suite for pull requests without Vision or secret access.
+- `cloudbuild-deploy.yaml` repeats those gates, builds and pushes an image tagged
+  with the immutable commit SHA, deploys it with a pinned configuration version,
+  and verifies `/api/v1/health`.
+- `flexbone-pr-ci` runs for pull requests targeting `main` using the least-privilege
+  `flexbone-ci` identity.
+- `flexbone-main-deploy` deploys pushes to `main` using `flexbone-deployer`.
+
+Artifact Registry cleanup policy
+`deploy/artifact-registry-cleanup-policy.json` deletes versions older than seven
+days while retaining the three most recent versions. The policy should be checked
+in dry-run mode before automatic deletion is enabled.
+
+### Rollback
+
+List revisions and move traffic back to the last healthy revision. Each revision
+retains its immutable image and pinned Secret Manager version:
+
+```powershell
+gcloud run revisions list `
+  --service flexbone-ocr `
+  --project flexbone-ocr-challenge-505909 `
+  --region asia-south1
+
+gcloud run services update-traffic flexbone-ocr `
+  --project flexbone-ocr-challenge-505909 `
+  --region asia-south1 `
+  --to-revisions PREVIOUS_REVISION=100
+```

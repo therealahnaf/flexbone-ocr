@@ -1,6 +1,8 @@
+import os
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,4 +26,22 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    configured_path = os.getenv("OCR_ENV_FILE")
+
+    if configured_path:
+        env_file = Path(configured_path)
+        try:
+            with env_file.open(encoding="utf-8") as file:
+                file.read(1)
+        except (OSError, UnicodeError):
+            raise RuntimeError("Configured OCR settings file is unavailable.") from None
+
+        try:
+            return Settings(_env_file=env_file)
+        except ValidationError:
+            raise RuntimeError("Configured OCR settings are invalid.") from None
+
+    try:
+        return Settings()
+    except ValidationError:
+        raise RuntimeError("Configured OCR settings are invalid.") from None

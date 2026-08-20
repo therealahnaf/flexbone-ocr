@@ -1,0 +1,75 @@
+substitutions:
+  _REGION: asia-south1
+  _SERVICE: flexbone-ocr
+  _REPOSITORY: flexbone
+  _OCR_ENV_VERSION: "1"
+
+steps:
+  - id: quality
+    name: ghcr.io/astral-sh/uv:0.8.13-python3.11-bookworm-slim
+    entrypoint: sh
+    args:
+      - -ceu
+      - |
+        uv sync --frozen --dev
+        uv run ruff check .
+        uv run ruff format --check .
+        uv run pytest --cov=app --cov-fail-under=85
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --project=${PROJECT_ID}
+      - --region=${_REGION}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_SERVICE}:${COMMIT_SHA}
+      - --service-account=ocr-runtime@${PROJECT_ID}.iam.gserviceaccount.com
+      - --allow-unauthenticated
+      - --cpu=1
+      - --memory=512Mi
+      - --timeout=60s
+      - --concurrency=20
+      - --min-instances=0
+      - --max-instances=1
+      - --cpu-throttling
+      - --set-env-vars=OCR_ENV_FILE=/secrets/ocr.env
+      - --set-secrets=/secrets/ocr.env=flexbone-ocr-env:${_OCR_ENV_VERSION}
+      - --labels=deployed-by=cloud-build,config-version=${_OCR_ENV_VERSION}
+      - --quiet
+
+  - id: health-check
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        service_url="$(gcloud run services describe "${_SERVICE}" \
+          --project="${PROJECT_ID}" \
+          --region="${_REGION}" \
+          --format='value(status.url)')"
+        curl --fail --silent --show-error \
+          --retry 5 --retry-delay 3 --retry-all-errors \
+          "${service_url}/api/v1/health"
+
+options:
+  machineType: E2_STANDARD_2
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s

@@ -1,7 +1,10 @@
 .git
 .gitignore
 .venv
-.env
+.env*
+credentials*.json
+*service-account*.json
+application_default_credentials.json
 __pycache__
 *.py[cod]
 .pytest_cache
