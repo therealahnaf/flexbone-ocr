@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
 
-from app.config import Settings
-from app.errors import OcrProviderError
+from app.core.config import Settings
+from app.core.errors import OcrProviderError
+from app.domain.models import OcrProviderResult
 from app.main import create_app
-from app.services import ProviderResult
 from tests.conftest import FakeOcrProvider, make_image
 
 
@@ -58,7 +58,7 @@ def test_no_text_is_a_success(
     provider: FakeOcrProvider,
 ) -> None:
     image = make_image("PNG")
-    provider.results[image] = ProviderResult("", ())
+    provider.results[image] = OcrProviderResult("", ())
 
     response = client.post(
         "/extract-text",
@@ -174,9 +174,7 @@ def test_batch_returns_ordered_partial_results_and_reuses_cache(
 def test_batch_enforces_maximum_and_provider_concurrency(settings: Settings) -> None:
     provider = FakeOcrProvider()
     provider.delay = 0.03
-    batch_settings = settings.model_copy(
-        update={"batch_max_files": 3, "batch_concurrency": 2}
-    )
+    batch_settings = settings.model_copy(update={"batch_max_files": 3, "batch_concurrency": 2})
     images = [make_image("PNG", color=(value, 0, 0)) for value in (1, 2, 3)]
 
     with TestClient(create_app(batch_settings, provider)) as client:

@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.errors import OcrProviderError
-from app.services import GoogleVisionOcrProvider
+from app.core.errors import OcrProviderError
+from app.infra.google_vision import GoogleVisionOcrProvider
 
 
 class FakeVisionClient:
@@ -70,7 +70,10 @@ async def test_google_provider_maps_client_and_response_errors() -> None:
 @pytest.mark.anyio
 async def test_google_provider_lazily_creates_client(monkeypatch) -> None:
     client = FakeVisionClient(vision_response())
-    monkeypatch.setattr("app.services.vision.ImageAnnotatorClient", lambda: client)
+    monkeypatch.setattr(
+        "app.infra.google_vision.vision.ImageAnnotatorClient",
+        lambda: client,
+    )
     provider = GoogleVisionOcrProvider(1)
 
     await provider.extract_text(b"one")

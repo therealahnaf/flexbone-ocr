@@ -4,8 +4,10 @@ import pytest
 from fastapi import UploadFile
 from starlette.datastructures import Headers
 
-from app.errors import FileTooLargeError, InvalidImageError, UnsupportedImageError
-from app.services import ImageValidator, TextProcessor
+from app.core.errors import FileTooLargeError, InvalidImageError, UnsupportedImageError
+from app.infra.image_inspection import PillowImageInspector
+from app.services.image_validation import ImageValidationService
+from app.services.text_processing import TextProcessingService
 from tests.conftest import make_image
 
 
@@ -34,7 +36,7 @@ async def test_validator_accepts_supported_images(
     expected_frames: int,
 ) -> None:
     content = make_image(image_format, frames=expected_frames)
-    validator = ImageValidator(len(content), 1_000)
+    validator = ImageValidationService(len(content), 1_000, PillowImageInspector())
 
     result = await validator.validate(upload(filename, content_type, content))
 
@@ -47,7 +49,7 @@ async def test_validator_accepts_supported_images(
 @pytest.mark.anyio
 async def test_validator_rejects_unsupported_or_mismatched_formats() -> None:
     jpeg = make_image("JPEG")
-    validator = ImageValidator(1_000_000, 1_000)
+    validator = ImageValidationService(1_000_000, 1_000, PillowImageInspector())
 
     with pytest.raises(UnsupportedImageError):
         await validator.validate(upload("image.bmp", "image/bmp", jpeg))
@@ -59,7 +61,7 @@ async def test_validator_rejects_unsupported_or_mismatched_formats() -> None:
 
 @pytest.mark.anyio
 async def test_validator_rejects_empty_corrupt_oversized_and_huge_images() -> None:
-    validator = ImageValidator(100, 100)
+    validator = ImageValidationService(100, 100, PillowImageInspector())
 
     with pytest.raises(InvalidImageError, match="empty"):
         await validator.validate(upload("image.jpg", "image/jpeg", b""))
@@ -69,15 +71,17 @@ async def test_validator_rejects_empty_corrupt_oversized_and_huge_images() -> No
         await validator.validate(upload("image.jpg", "image/jpeg", b"x" * 101))
 
     large_dimensions = make_image("PNG", size=(11, 10))
-    dimension_validator = ImageValidator(len(large_dimensions), 100)
+    dimension_validator = ImageValidationService(
+        len(large_dimensions),
+        100,
+        PillowImageInspector(),
+    )
     with pytest.raises(FileTooLargeError, match="dimensions"):
-        await dimension_validator.validate(
-            upload("image.png", "image/png", large_dimensions)
-        )
+        await dimension_validator.validate(upload("image.png", "image/png", large_dimensions))
 
 
 def test_text_processor_preserves_structure_and_limits_blank_lines() -> None:
     raw = "\r\n  First  \r\n\r\n\r\n\r\nSecond\t \n\n"
 
-    assert TextProcessor.clean(raw) == "  First\n\n\nSecond"
-    assert TextProcessor.clean("\r\n\r\n") == ""
+    assert TextProcessingService.clean(raw) == "  First\n\n\nSecond"
+    assert TextProcessingService.clean("\r\n\r\n") == ""

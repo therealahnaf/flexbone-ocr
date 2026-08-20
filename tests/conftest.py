@@ -6,23 +6,26 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from app.config import Settings
-from app.errors import OcrProviderError
+from app.core.config import Settings
+from app.core.errors import OcrProviderError
+from app.domain.models import OcrProviderResult
 from app.main import create_app
-from app.services import ProviderResult
 
 
 class FakeOcrProvider:
     def __init__(self) -> None:
         self.calls: list[bytes] = []
-        self.results: dict[bytes, ProviderResult] = {}
+        self.results: dict[bytes, OcrProviderResult] = {}
         self.errors: dict[bytes, Exception] = {}
-        self.default_result = ProviderResult("  Hello  \r\n\r\n\r\n\r\nWorld  \n", (0.8, 1.0))
+        self.default_result = OcrProviderResult(
+            "  Hello  \r\n\r\n\r\n\r\nWorld  \n",
+            (0.8, 1.0),
+        )
         self.delay = 0.0
         self.active = 0
         self.max_active = 0
 
-    async def extract_text(self, content: bytes) -> ProviderResult:
+    async def extract_text(self, content: bytes) -> OcrProviderResult:
         self.calls.append(content)
         self.active += 1
         self.max_active = max(self.max_active, self.active)
@@ -47,10 +50,7 @@ def make_image(
     output = io.BytesIO()
     image = Image.new("RGB", size, color)
     if image_format == "GIF" and frames > 1:
-        other_frames = [
-            Image.new("RGB", size, (index * 30, 0, 0))
-            for index in range(1, frames)
-        ]
+        other_frames = [Image.new("RGB", size, (index * 30, 0, 0)) for index in range(1, frames)]
         image.save(
             output,
             format=image_format,

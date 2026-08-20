@@ -152,14 +152,20 @@ Settings use the `OCR_` prefix and can be placed in `.env`:
 
 ## Design
 
-The API routes only translate HTTP input/output. `OcrService` coordinates small,
-replaceable components:
+The application follows a conventional layered FastAPI structure:
 
-- `OcrProvider` isolates Google Vision and permits a quota-free fake in tests.
-- `ImageValidator` enforces format, size, integrity, and metadata rules.
-- `TextProcessor` normalizes OCR output while preserving meaningful line breaks.
-- `OcrCache` hides the bounded TTL cache implementation.
-- `InMemoryRateLimiter` protects only OCR endpoints; health and docs remain open.
+- `app/api`: transport-only routes, dependency lookup, and API composition.
+- `app/schemas`: Pydantic HTTP response schemas with no service logic.
+- `app/domain`: frozen dataclass contracts and dependency-inversion protocols.
+- `app/services`: focused OCR, batch, validation, and text-processing use cases.
+- `app/infra`: Google Vision, cache, and rate-limiter adapters.
+- `app/core`: settings, composition root, exceptions, logging, and middleware.
+
+Routes delegate directly to `OcrUseCase` or `BatchOcrUseCase`. `OcrService`
+depends only on the `OcrProvider`, `OcrCache`, `ImageValidator`, and
+`TextProcessor` protocols. `ApplicationContainer` is the single composition root
+that selects concrete implementations. This keeps FastAPI and Google SDK types
+out of the business contracts and makes every external dependency replaceable.
 
 Uploads remain in memory and are never written to disk. Duplicate concurrent
 requests share one in-flight Vision call. The Vision client is created lazily, so
@@ -171,6 +177,8 @@ The default suite generates images in memory and injects a fake OCR provider. It
 does not call Google Vision or consume quota.
 
 ```powershell
+uv run ruff check app tests
+uv run ruff format --check app tests
 uv run pytest --cov=app --cov-fail-under=85
 ```
 

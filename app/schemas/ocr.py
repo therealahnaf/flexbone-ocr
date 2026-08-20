@@ -2,8 +2,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.errors import BatchItemErrorResponse
 
-class ImageMetadata(BaseModel):
+
+class ImageMetadataResponse(BaseModel):
     filename: str
     format: Literal["JPEG", "PNG", "GIF"]
     content_type: str
@@ -20,22 +22,7 @@ class OcrResponse(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     processing_time_ms: int = Field(ge=0)
     cached: bool
-    metadata: ImageMetadata
-
-
-class ErrorDetail(BaseModel):
-    code: str
-    message: str
-
-
-class ErrorResponse(BaseModel):
-    success: Literal[False] = False
-    error: ErrorDetail
-    request_id: str
-
-
-class BatchItemError(ErrorResponse):
-    filename: str
+    metadata: ImageMetadataResponse
 
 
 class BatchResponse(BaseModel):
@@ -44,4 +31,4 @@ class BatchResponse(BaseModel):
     successful: int
     failed: int
     processing_time_ms: int = Field(ge=0)
-    results: list[OcrResponse | BatchItemError]
+    results: list[OcrResponse | BatchItemErrorResponse]
