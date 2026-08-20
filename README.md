@@ -255,6 +255,9 @@ Cloud Run supplies ADC through its service identity.
 
 ### CI/CD
 
+Cloud Build is connected to this GitHub repository and reports pull-request and
+deployment results back to GitHub.
+
 - `cloudbuild-ci.yaml` runs frozen dependency installation, Ruff checks, and the
   fake-provider test suite for pull requests without Vision or secret access.
 - `cloudbuild-deploy.yaml` repeats those gates, builds and pushes an image tagged
