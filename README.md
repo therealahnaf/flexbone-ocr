@@ -19,12 +19,53 @@ Google Cloud Vision. It is deployed publicly on Google Cloud Run.
 
 ## Test the deployed API
 
-The repository includes [`test.jpg`](test.jpg).
+The repository includes five images in [`samples/`](samples/). Run these commands
+from the repository root.
+
+### macOS and Linux
+
+Single image:
 
 ```bash
 curl -X POST \
-  -F "image=@test.jpg" \
+  -F "image=@samples/sample_ocr_1.jpg" \
   https://flexbone-ocr-7wgxo2mfka-el.a.run.app/extract-text
+```
+
+Batch of five images:
+
+```bash
+curl -X POST \
+  -F "images=@samples/sample_ocr_1.jpg" \
+  -F "images=@samples/sample_ocr_2.jpg" \
+  -F "images=@samples/sample_ocr_3.png" \
+  -F "images=@samples/sample_ocr_4.jpg" \
+  -F "images=@samples/sample_ocr_5.jpg" \
+  https://flexbone-ocr-7wgxo2mfka-el.a.run.app/extract-text/batch
+```
+
+### Windows PowerShell
+
+Use `curl.exe` to avoid PowerShell's `curl` alias.
+
+Single image:
+
+```powershell
+curl.exe -X POST `
+  -F "image=@samples/sample_ocr_1.jpg" `
+  "https://flexbone-ocr-7wgxo2mfka-el.a.run.app/extract-text"
+```
+
+Batch of five images:
+
+```powershell
+curl.exe -X POST `
+  -F "images=@samples/sample_ocr_1.jpg" `
+  -F "images=@samples/sample_ocr_2.jpg" `
+  -F "images=@samples/sample_ocr_3.png" `
+  -F "images=@samples/sample_ocr_4.jpg" `
+  -F "images=@samples/sample_ocr_5.jpg" `
+  "https://flexbone-ocr-7wgxo2mfka-el.a.run.app/extract-text/batch"
 ```
 
 Example response:
@@ -37,7 +78,7 @@ Example response:
   "processing_time_ms": 321,
   "cached": false,
   "metadata": {
-    "filename": "test.jpg",
+    "filename": "sample_ocr_1.jpg",
     "format": "JPEG",
     "content_type": "image/jpeg",
     "size_bytes": 12345,
@@ -60,14 +101,8 @@ Send `multipart/form-data` with one field named `image`.
 
 ### `POST /extract-text/batch`
 
-Send one to five repeated fields named `images`:
-
-```bash
-curl -X POST \
-  -F "images=@test.jpg" \
-  -F "images=@another.png" \
-  https://flexbone-ocr-7wgxo2mfka-el.a.run.app/extract-text/batch
-```
+Send one to five repeated fields named `images`, as shown in the platform-specific
+examples above.
 
 Batch responses preserve input order and return successful and failed item counts.
 One invalid image does not discard successful results.
