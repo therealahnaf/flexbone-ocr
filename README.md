@@ -1,73 +1,33 @@
 # Flexbone OCR API
 
-A FastAPI service that accepts image uploads and extracts text with Google Cloud
-Vision document-text detection. It is designed for local development with `uv`
-and is ready to run as a non-root container on Google Cloud Run.
+A production-ready FastAPI service that extracts text from uploaded images with
+Google Cloud Vision. It is deployed publicly on Google Cloud Run.
+
+- **API:** https://flexbone-ocr-7wgxo2mfka-el.a.run.app
+- **Swagger UI:** https://flexbone-ocr-7wgxo2mfka-el.a.run.app/docs
+- **Health:** https://flexbone-ocr-7wgxo2mfka-el.a.run.app/api/v1/health
 
 ## Features
 
-- Single-image OCR for JPG/JPEG, PNG, and GIF (animated GIFs use the first frame)
-- Batch OCR for up to five images with ordered partial results
-- Mean word-confidence score and cleaned text formatting
-- Image dimensions, format, mode, frame count, and size metadata
-- SHA-256 duplicate detection with a bounded 10-minute in-memory cache
-- Per-client in-memory rate limiting with `Retry-After`
-- Bounded file reads, content validation, pixel limits, safe errors, and request IDs
-- Structured JSON request logging without logging image data or extracted text
+- JPG/JPEG, PNG, and GIF support with a 10 MiB upload limit
+- Extracted text, mean word confidence, processing time, and image metadata
+- Cleaned whitespace and graceful handling when no text is found
+- SHA-256 duplicate-image caching for 10 minutes
+- Per-client rate limiting with `Retry-After`
+- Ordered batch OCR for up to five images
+- Safe validation, structured logging, request IDs, and consistent errors
 
-The cache and rate limiter are intentionally process-local. They reset whenever
-the server restarts and are not shared between Cloud Run instances.
+## Test the deployed API
 
-## Prerequisites
+The repository includes [`test.jpg`](test.jpg).
 
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/)
-- Google Cloud CLI
-- A Google Cloud project with the Vision API enabled
-- Application Default Credentials (ADC)
-
-This project is configured for `flexbone-ocr-challenge-505909`. Authenticate and
-verify the active project:
-
-```powershell
-gcloud auth login
-gcloud config set project flexbone-ocr-challenge-505909
-gcloud auth application-default login
-gcloud config get-value project
-gcloud services enable vision.googleapis.com
+```bash
+curl -X POST \
+  -F "image=@test.jpg" \
+  https://flexbone-ocr-7wgxo2mfka-el.a.run.app/extract-text
 ```
 
-ADC is discovered automatically by the Google client library. Do not download a
-service-account key or set `GOOGLE_APPLICATION_CREDENTIALS` for normal local
-development.
-
-## Run locally
-
-```powershell
-uv sync --dev
-Copy-Item .env.example .env
-uv run fastapi dev app/main.py
-```
-
-The server is available at `http://127.0.0.1:8000`:
-
-- Interactive API docs: `http://127.0.0.1:8000/docs`
-- OpenAPI document: `http://127.0.0.1:8000/openapi.json`
-- Health check: `GET http://127.0.0.1:8000/api/v1/health`
-
-The `.env` copy is optional because every setting has a safe default.
-
-## API
-
-### Extract text from one image
-
-`POST /extract-text` expects multipart field `image`:
-
-```powershell
-curl.exe -X POST -F "image=@test.jpg" http://127.0.0.1:8000/extract-text
-```
-
-Successful response:
+Example response:
 
 ```json
 {
@@ -89,28 +49,30 @@ Successful response:
 }
 ```
 
-An image containing no readable text returns HTTP 200 with `text: ""` and
-`confidence: 0.0`.
+An image with no readable text returns HTTP 200 with empty `text` and confidence
+`0.0`.
 
-### Extract text from a batch
+## API
 
-`POST /extract-text/batch` accepts one to five repeated `images` fields:
+### `POST /extract-text`
 
-```powershell
-curl.exe -X POST `
-  -F "images=@test.jpg" `
-  -F "images=@another.png" `
-  http://127.0.0.1:8000/extract-text/batch
+Send `multipart/form-data` with one field named `image`.
+
+### `POST /extract-text/batch`
+
+Send one to five repeated fields named `images`:
+
+```bash
+curl -X POST \
+  -F "images=@test.jpg" \
+  -F "images=@another.png" \
+  https://flexbone-ocr-7wgxo2mfka-el.a.run.app/extract-text/batch
 ```
 
-The response preserves input order and contains `total`, `successful`, `failed`,
-total processing time, and one success or error object per file. A valid batch
-returns HTTP 200 even when individual files fail, allowing successful results to
-be retained.
+Batch responses preserve input order and return successful and failed item counts.
+One invalid image does not discard successful results.
 
 ### Errors
-
-All request-level errors use this shape:
 
 ```json
 {
@@ -119,172 +81,78 @@ All request-level errors use this shape:
     "code": "unsupported_image",
     "message": "Only JPG, JPEG, PNG, and GIF images are supported."
   },
-  "request_id": "59d20b4e-4407-475c-9fe7-e93dd772a5cf"
+  "request_id": "correlation-id"
 }
 ```
 
 | Status | Meaning |
 | --- | --- |
-| `413` | File bytes or decoded image dimensions exceed a limit |
+| `413` | File size or decoded dimensions exceed a limit |
 | `415` | Unsupported, mismatched, or spoofed image format |
-| `422` | Missing multipart field, corrupt image, or invalid batch |
-| `429` | Rate limit exceeded; inspect `Retry-After` |
-| `502` | Google Vision rejected or could not complete OCR |
-| `500` | Unexpected server error with implementation details hidden |
+| `422` | Missing, empty, corrupt, or invalid upload |
+| `429` | Rate limit exceeded |
+| `502` | Google Vision could not complete OCR |
+| `500` | Unexpected server error |
 
-Every response includes `X-Request-ID` for correlation.
+## Implementation
 
-## Configuration
+Google Cloud Vision performs document-text detection using Cloud Run's runtime
+service identity, so no service-account key is stored in the repository or image.
 
-Settings use the `OCR_` prefix and can be placed in `.env`:
+Uploads are read into memory with a strict byte limit and never written to disk.
+The service verifies extension, MIME type, detected image format, image integrity,
+and decoded pixel count before calling Vision. Google-specific code is behind an
+`OcrProvider` contract; FastAPI routes delegate all behavior to application
+services, which keeps the API layer thin and the tests independent of Vision.
 
-| Variable | Default | Description |
-| --- | ---: | --- |
-| `OCR_ENV_FILE` | `.env` | Optional bootstrap path to a mounted dotenv file |
-| `OCR_MAX_FILE_SIZE_BYTES` | `10485760` | Maximum bytes per image (10 MiB) |
-| `OCR_MAX_IMAGE_PIXELS` | `25000000` | Maximum decoded width x height |
-| `OCR_CACHE_TTL_SECONDS` | `600` | Cached OCR result lifetime |
-| `OCR_CACHE_MAX_ENTRIES` | `256` | Maximum cached image hashes |
-| `OCR_RATE_LIMIT_REQUESTS` | `30` | OCR requests allowed per client/window |
-| `OCR_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate-limit window |
-| `OCR_VISION_TIMEOUT_SECONDS` | `15` | Deadline for a Vision request |
-| `OCR_BATCH_MAX_FILES` | `5` | Maximum images in a batch |
-| `OCR_BATCH_CONCURRENCY` | `3` | Maximum concurrent Vision calls |
+Production configuration is a versioned Secret Manager dotenv file mounted
+read-only by Cloud Run. Cloud Build runs CI for pull requests, then builds,
+publishes, deploys, and health-checks immutable commit-tagged images after merges
+to `main`.
 
-## Design
+See [`docs/deployment.md`](docs/deployment.md) for the concise deployment runbook.
 
-The application follows a conventional layered FastAPI structure:
+## Run locally
 
-- `app/api`: transport-only routes, dependency lookup, and API composition.
-- `app/schemas`: Pydantic HTTP response schemas with no service logic.
-- `app/domain`: frozen dataclass contracts and dependency-inversion protocols.
-- `app/services`: focused OCR, batch, validation, and text-processing use cases.
-- `app/infra`: Google Vision, cache, and rate-limiter adapters.
-- `app/core`: settings, composition root, exceptions, logging, and middleware.
-
-Routes delegate directly to `OcrUseCase` or `BatchOcrUseCase`. `OcrService`
-depends only on the `OcrProvider`, `OcrCache`, `ImageValidator`, and
-`TextProcessor` protocols. `ApplicationContainer` is the single composition root
-that selects concrete implementations. This keeps FastAPI and Google SDK types
-out of the business contracts and makes every external dependency replaceable.
-
-Uploads remain in memory and are never written to disk. Duplicate concurrent
-requests share one in-flight Vision call. The Vision client is created lazily, so
-importing the application and running unit tests do not require Google credentials.
-
-## Testing
-
-The default suite generates images in memory and injects a fake OCR provider. It
-does not call Google Vision or consume quota.
+Requirements: Python 3.11+, `uv`, Google Cloud CLI, and access to project
+`flexbone-ocr-challenge-505909`.
 
 ```powershell
-uv run ruff check app tests
-uv run ruff format --check app tests
+gcloud auth application-default login
+gcloud config set project flexbone-ocr-challenge-505909
+gcloud services enable vision.googleapis.com
+
+uv sync --dev
+Copy-Item .env.example .env
+uv run fastapi dev app/main.py
+```
+
+Open http://127.0.0.1:8000/docs. The `.env` copy is optional because settings have
+safe defaults.
+
+## Test and build
+
+Tests inject a fake OCR provider and do not consume Vision quota.
+
+```powershell
+uv run ruff check .
+uv run ruff format --check .
 uv run pytest --cov=app --cov-fail-under=85
-```
-
-To run the standalone live Vision smoke test with ADC and the included sample:
-
-```powershell
-uv run python test_vision.py
-```
-
-## Docker
-
-Build the pinned, non-root production image:
-
-```powershell
 docker build -t flexbone-ocr .
 ```
 
-For local container testing only, mount the ADC file generated by gcloud as
-read-only:
+The suite covers validation, errors, confidence, cleanup, caching, rate limiting,
+batch ordering/concurrency, and provider failures. The production image is
+multi-stage, pinned, non-root, and honors Cloud Run's injected `PORT`.
 
-```powershell
-docker run --rm -p 8080:8080 `
-  -e GOOGLE_APPLICATION_CREDENTIALS=/var/secrets/google/adc.json `
-  --mount "type=bind,source=$env:APPDATA\gcloud\application_default_credentials.json,target=/var/secrets/google/adc.json,readonly" `
-  flexbone-ocr
-```
+## Project structure
 
-Test it at `http://127.0.0.1:8080/docs`. The container listens on `0.0.0.0` and
-uses Cloud Run's injected `PORT`, defaulting to 8080 locally.
-
-## Production deployment
-
-Production uses Cloud Build, Artifact Registry, Cloud Run, and Secret Manager in
-project `flexbone-ocr-challenge-505909`. The deployed URL is recorded here after
-the initial release:
-
-Public API: [https://flexbone-ocr-7wgxo2mfka-el.a.run.app](https://flexbone-ocr-7wgxo2mfka-el.a.run.app)
-
-- Interactive docs: [https://flexbone-ocr-7wgxo2mfka-el.a.run.app/docs](https://flexbone-ocr-7wgxo2mfka-el.a.run.app/docs)
-- Health check: [https://flexbone-ocr-7wgxo2mfka-el.a.run.app/api/v1/health](https://flexbone-ocr-7wgxo2mfka-el.a.run.app/api/v1/health)
-
-Cloud Run runs with the dedicated identity
-`ocr-runtime@flexbone-ocr-challenge-505909.iam.gserviceaccount.com`, zero to one
-instances, one CPU, 512 MiB memory, request-based billing, and a 20-request
-concurrency limit. The one-instance maximum preserves the process-local cache and
-rate-limit behavior.
-
-### Production configuration and secrets
-
-Secret Manager secret `flexbone-ocr-env` contains the complete production dotenv
-document. Cloud Run mounts a numeric secret version read-only at
-`/secrets/ocr.env` and sets `OCR_ENV_FILE=/secrets/ocr.env`. The application fails
-startup safely if an explicitly configured file is missing, unreadable, or
-invalid.
-
-Create or rotate the payload from a temporary file outside the repository. Never
-put the value directly in a command argument or print it:
-
-```powershell
-$configFile = Join-Path $env:TEMP "flexbone-ocr-production.env"
-# Create $configFile with the OCR_* settings, then upload it without displaying it.
-gcloud secrets versions add flexbone-ocr-env `
-  --project flexbone-ocr-challenge-505909 `
-  --data-file=$configFile
-Remove-Item -LiteralPath $configFile
-```
-
-After rotation, update `_OCR_ENV_VERSION` on the `flexbone-main-deploy` trigger
-and run it. Retain the current and two previous enabled versions for rollback;
-destroy older versions after the rollback window. Do not store Google credentials
-in this secret and do not set `GOOGLE_APPLICATION_CREDENTIALS` on Cloud Run.
-Cloud Run supplies ADC through its service identity.
-
-### CI/CD
-
-Cloud Build is connected to this GitHub repository and reports pull-request and
-deployment results back to GitHub.
-
-- `cloudbuild-ci.yaml` runs frozen dependency installation, Ruff checks, and the
-  fake-provider test suite for pull requests without Vision or secret access.
-- `cloudbuild-deploy.yaml` repeats those gates, builds and pushes an image tagged
-  with the immutable commit SHA, deploys it with a pinned configuration version,
-  and verifies `/api/v1/health`.
-- `flexbone-pr-ci` runs for pull requests targeting `main` using the least-privilege
-  `flexbone-ci` identity.
-- `flexbone-main-deploy` deploys pushes to `main` using `flexbone-deployer`.
-
-Artifact Registry cleanup policy
-`deploy/artifact-registry-cleanup-policy.json` deletes versions older than seven
-days while retaining the three most recent versions. The policy should be checked
-in dry-run mode before automatic deletion is enabled.
-
-### Rollback
-
-List revisions and move traffic back to the last healthy revision. Each revision
-retains its immutable image and pinned Secret Manager version:
-
-```powershell
-gcloud run revisions list `
-  --service flexbone-ocr `
-  --project flexbone-ocr-challenge-505909 `
-  --region asia-south1
-
-gcloud run services update-traffic flexbone-ocr `
-  --project flexbone-ocr-challenge-505909 `
-  --region asia-south1 `
-  --to-revisions PREVIOUS_REVISION=100
+```text
+app/api       HTTP routes and dependencies
+app/core      settings, middleware, errors, and composition
+app/domain    dataclass contracts and protocols
+app/infra     Google Vision, image, cache, and rate-limit adapters
+app/schemas   HTTP request/response models
+app/services  OCR, batch, validation, and text-processing use cases
+tests         isolated unit and API tests
 ```
