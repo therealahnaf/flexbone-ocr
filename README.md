@@ -72,6 +72,10 @@ curl -X POST \
 Batch responses preserve input order and return successful and failed item counts.
 One invalid image does not discard successful results.
 
+> **Swagger UI note:** The batch field may appear as a string input because
+> Swagger UI does not yet render OpenAPI 3.1 arrays of binary files correctly.
+> The endpoint still accepts repeated multipart `images` fields as shown above.
+
 ### Errors
 
 ```json
